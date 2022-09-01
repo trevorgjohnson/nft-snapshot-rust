@@ -4,7 +4,7 @@ use std::io::prelude::*;
 use std::{convert::TryFrom, fs::File, sync::Arc};
 
 abigen!(
-    EzuContract,
+    NFTContract,
     r#"[
         function ownerOf(uint256 tokenId) external view returns (address)
         function totalSupply() external view returns (uint256)
@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
             .unwrap();
     let client = Arc::new(client);
 
-    let contract = EzuContract::new(contract_address, client.clone());
+    let contract = NFTContract::new(contract_address, client.clone());
 
     let total_supply = contract.total_supply().call().await?;
     let total_supply: i32 = total_supply.to_string().parse().unwrap();
