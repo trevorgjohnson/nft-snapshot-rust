@@ -1,7 +1,11 @@
-use ethers::{abi::AbiEncode, contract::abigen, prelude::*};
+#![feature(async_closure)]
+
+use ethers::{contract::abigen, prelude::*};
 use eyre::Result;
+use std::{fs::File, sync::Arc};
 use std::io::prelude::*;
-use std::{convert::TryFrom, fs::File, sync::Arc};
+use std::env;
+use futures;
 
 abigen!(
     NFTContract,
@@ -14,32 +18,39 @@ abigen!(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let contract_address = "<insert_contract_address_here>".parse::<Address>()?;
+    let arguments = env::args().collect::<Vec<String>>();
+    let contract_address = arguments[1].parse::<Address>()?;
+    let provider_url = arguments[2].parse::<String>()?;
 
-    let client =
-        Provider::<Http>::try_from("https://mainnet.infura.io/v3/<insert_infura_api_key_here>")
-            .unwrap();
-    let client = Arc::new(client);
+    let client = Arc::new(Provider::<Ws>::connect(provider_url).await?);
+    let contract = Arc::new(NFTContract::new(contract_address, client));
 
-    let contract = NFTContract::new(contract_address, client.clone());
+    let total_supply = contract.total_supply().call().await?.as_u64();
 
-    let total_supply = contract.total_supply().call().await?;
-    let total_supply: i32 = total_supply.to_string().parse().unwrap();
+    let results: Vec<Result<String>> = futures::stream::iter(1..total_supply)
+        .map(|token| {
+            let inner_contract = contract.clone();
+            async move {
+                let owner = inner_contract.owner_of(token.into()).call().await?;
+                let owner_string = ethers::utils::to_checksum(&owner, None);
+
+                let result = format!("  \"{}\": \"{}\"", token.to_string(), owner_string);
+                println!("{result}");
+
+                Ok(result)
+            }
+        })
+        .buffered(100)
+        .collect()
+        .await;
+
+    let results = results.into_iter()
+        .map(|result| result.unwrap())
+        .collect::<Vec<String>>()
+        .join(",\n");
 
     let mut output = File::create("snapshot.json")?;
-
-    writeln!(output, "{{")?;
-
-    for i in 1..total_supply {
-        println!("{i}");
-        let owner: Address = contract.owner_of(i.into()).call().await?;
-        let owner = owner.encode_hex();
-        let address_no_prefix = &owner[26..];
-        let full_address = format!("'0x{}',", address_no_prefix);
-        writeln!(output, "{}", full_address)?;
-    }
-
-    writeln!(output, "}}")?;
+    writeln!(output, "{{\n{results}\n}}")?;
 
     Ok(())
 }
